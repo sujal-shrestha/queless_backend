@@ -4,8 +4,8 @@ const mongoose = require("mongoose");
 const venueSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, trim: true },
-    type: { type: String, enum: ["bank", "hospital"], required: true },
-    logoUrl: { type: String, default: "" },
+    logo: { type: String, default: "" }, // e.g. "hams.png"
+    isActive: { type: Boolean, default: true },
   },
   { timestamps: true }
 );
