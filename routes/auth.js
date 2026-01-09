@@ -7,6 +7,11 @@ const router = express.Router();
 
 // helper to create token
 const generateToken = (id, role) => {
+  if (!process.env.JWT_SECRET) {
+    // Helps you catch missing .env quickly
+    throw new Error("JWT_SECRET is not set in .env");
+  }
+
   return jwt.sign({ id, role }, process.env.JWT_SECRET, {
     expiresIn: "7d",
   });
@@ -21,7 +26,7 @@ const isValidEmail = (email) => {
 const isValidUsername = (username) => {
   // allow letters, numbers, underscore, dash (good for IDs like S2024001 / ST2024001)
   const re = /^[a-zA-Z0-9_-]{3,20}$/;
-  return re.test(username);
+  return re.test(String(username));
 };
 
 // POST /api/auth/signup  (for normal users)
@@ -41,7 +46,8 @@ router.post("/signup", async (req, res) => {
     // username rules
     if (!isValidUsername(username)) {
       return res.status(400).json({
-        message: "Username must be 3-20 chars and only letters/numbers/_/- allowed",
+        message:
+          "Username must be 3-20 chars and only letters/numbers/_/- allowed",
       });
     }
 
@@ -86,8 +92,14 @@ router.post("/signup", async (req, res) => {
       token: generateToken(user._id, user.role),
     });
   } catch (err) {
-    console.error("Signup error:", err.message);
-    res.status(500).json({ message: "Server error" });
+    // ✅ IMPORTANT: print full error + stack so we can fix the real issue
+    console.error("Signup error FULL:", err);
+    console.error("Signup error STACK:", err?.stack);
+
+    return res.status(500).json({
+      message: "Server error",
+      error: err?.message ?? "Unknown error",
+    });
   }
 });
 
@@ -112,9 +124,7 @@ router.post("/login", async (req, res) => {
 
     // username rules (same as signup)
     if (!isValidUsername(id)) {
-      return res.status(400).json({
-        message: "Invalid ID format",
-      });
+      return res.status(400).json({ message: "Invalid ID format" });
     }
 
     if (password.length < 6) {
@@ -143,8 +153,14 @@ router.post("/login", async (req, res) => {
       token: generateToken(user._id, user.role),
     });
   } catch (err) {
-    console.error("Login error:", err.message);
-    res.status(500).json({ message: "Server error" });
+    // ✅ print full error + stack
+    console.error("Login error FULL:", err);
+    console.error("Login error STACK:", err?.stack);
+
+    return res.status(500).json({
+      message: "Server error",
+      error: err?.message ?? "Unknown error",
+    });
   }
 });
 
