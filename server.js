@@ -1,4 +1,3 @@
-// server.js
 const express = require("express");
 const cors = require("cors");
 const dotenv = require("dotenv");
@@ -6,25 +5,22 @@ const path = require("path");
 
 const connectDB = require("./config/db");
 const bookingRoutes = require("./routes/bookingRoutes");
+const venueRoutes = require("./routes/venueRoutes"); // ✅ use this exact file
 
-// ✅ Load env first
+// ✅ NEW: staff + org queue routes
+const staffRoutes = require("./routes/staffRoutes");
+const orgQueueRoutes = require("./routes/orgQueueRoutes");
+
+const queueRoutes = require("./routes/queueRoutes");
+
 dotenv.config();
-
-// ✅ Connect DB
 connectDB();
 
-// ✅ Create app BEFORE app.use
 const app = express();
 
-/**
- * ✅ Serve logos (must be after app is created)
- * URL: http://localhost:5001/logos/<filename>
- */
+// ✅ serve logos
 app.use("/logos", express.static(path.join(__dirname, "public/logos")));
 
-/**
- * ✅ CORS
- */
 app.use(
   cors({
     origin: "*",
@@ -35,25 +31,26 @@ app.use(
 
 app.use(express.json());
 
-/**
- * ✅ Debug logger
- */
 app.use((req, res, next) => {
   console.log(`➡️ ${req.method} ${req.originalUrl}`);
-  res.on("finish", () => {
-    console.log(`⬅️ ${req.method} ${req.originalUrl} -> ${res.statusCode}`);
-  });
+  res.on("finish", () =>
+    console.log(`⬅️ ${req.method} ${req.originalUrl} -> ${res.statusCode}`)
+  );
   next();
 });
 
-// ✅ Routes (KEEP ONLY ONE /api/venues)
 app.use("/api/auth", require("./routes/auth"));
-app.use("/api/venues", require("./routes/venues"));
-app.use("/api/bookings", bookingRoutes);
 
-app.get("/", (req, res) => {
-  res.send("QueueLess API is running");
-});
+// ✅ NEW: staff login + org queue (super simple)
+app.use("/api/staff", staffRoutes);
+app.use("/api/org", orgQueueRoutes);
+app.use("/api/auth", require("./routes/auth"));
+app.use("/api/venues", venueRoutes); // ✅ ONLY THIS ONCE
+app.use("/api/bookings", bookingRoutes);
+app.use("/api/queue", queueRoutes);
+
+
+app.get("/", (req, res) => res.send("QueueLess API is running"));
 
 const PORT = process.env.PORT || 5001;
 app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
