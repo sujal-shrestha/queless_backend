@@ -1,7 +1,11 @@
 // routes/venueRoutes.js
 const router = require("express").Router();
-const { getVenues } = require("../controllers/venueController");
+const { getVenues, getVenueBranches } = require("../controllers/venueController");
 
-router.get("/", getVenues); // GET /api/venues?search=
+// GET /api/venues?search=
+router.get("/", getVenues);
+
+// ✅ NEW: GET /api/venues/:venueId/branches
+router.get("/:venueId/branches", getVenueBranches);
 
 module.exports = router;

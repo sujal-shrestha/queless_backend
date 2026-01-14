@@ -7,28 +7,31 @@ const Venue = require("../models/Venue");
 const Branch = require("../models/Branch");
 
 const venuesData = [
+  // ✅ HOSPITALS (ONLY ONE BRANCH EACH)
   {
     name: "Hams Hospital",
     logo: "hams.png",
-    branches: [
-      { name: "Hattigauda", address: "Budhanilkantha" },
-      { name: "New Road", address: "New Road, KTM" },
-    ],
-  },
-  {
-    name: "Nabil Bank",
-    logo: "nabil.png",
-    branches: [
-      { name: "Durbar Marg", address: "Kathmandu" },
-      { name: "Kalimati", address: "Kathmandu" },
-    ],
+    branches: [{ name: "Dhumbarahi", address: "Kathmandu" }],
   },
   {
     name: "Medicity Hospital",
     logo: "medicity.png",
+    branches: [{ name: "Nakhu", address: "Lalitpur" }],
+  },
+
+  // ✅ BANKS (7–8 BRANCHES EACH)
+  {
+    name: "Nabil Bank",
+    logo: "nabil.png",
     branches: [
-      { name: "Bhaisepati", address: "Lalitpur" },
-      { name: "Satdobato", address: "Lalitpur" },
+      { name: "Kantipath", address: "Kathmandu" }, // example branch listing exists publicly :contentReference[oaicite:1]{index=1}
+      { name: "Durbar Marg", address: "Kathmandu" },
+      { name: "New Road", address: "Kathmandu" },
+      { name: "Putalisadak", address: "Kathmandu" },
+      { name: "Baneshwor", address: "Kathmandu" },
+      { name: "Kalimati", address: "Kathmandu" },
+      { name: "Maharajgunj", address: "Kathmandu" },
+      { name: "Chabahil", address: "Kathmandu" },
     ],
   },
   {
@@ -36,15 +39,27 @@ const venuesData = [
     logo: "siddhartha.png",
     branches: [
       { name: "Putalisadak", address: "Kathmandu" },
-      { name: "Bhaktapur", address: "Bhaktapur" },
+      { name: "New Road", address: "Kathmandu" },
+      { name: "Baneshwor", address: "Kathmandu" },
+      { name: "Kalanki", address: "Kathmandu" },
+      { name: "Maharajgunj", address: "Kathmandu" },
+      { name: "Chabahil", address: "Kathmandu" },
+      { name: "Koteshwor", address: "Kathmandu" },
+      { name: "Lagankhel", address: "Lalitpur" },
     ],
   },
   {
     name: "Laxmi Sunrise Bank",
     logo: "laxmi.png",
     branches: [
-      { name: "Baneshwor", address: "Kathmandu" },
       { name: "Lazimpat", address: "Kathmandu" },
+      { name: "New Road", address: "Kathmandu" },
+      { name: "Baneshwor", address: "Kathmandu" },
+      { name: "Kalanki", address: "Kathmandu" },
+      { name: "Koteshwor", address: "Kathmandu" },
+      { name: "Boudha", address: "Kathmandu" },
+      { name: "Maharajgunj", address: "Kathmandu" },
+      { name: "Kupondole", address: "Lalitpur" },
     ],
   },
 ];
@@ -55,6 +70,7 @@ async function run() {
 
   await mongoose.connect(uri);
 
+  // ⚠️ This wipes existing venues + branches (DEV ONLY)
   await Branch.deleteMany({});
   await Venue.deleteMany({});
 
@@ -75,7 +91,7 @@ async function run() {
     await Branch.insertMany(branches);
   }
 
-  console.log("✅ Seeded 5 venues + branches");
+  console.log(`✅ Seeded ${venuesData.length} venues + branches`);
   process.exit(0);
 }
 
