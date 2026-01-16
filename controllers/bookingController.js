@@ -1,4 +1,5 @@
 const jwt = require("jsonwebtoken");
+const mongoose = require("mongoose");
 const Booking = require("../models/Booking");
 
 /**
@@ -24,7 +25,6 @@ function makeQueueNumber(index) {
  * ✅ Generate ticket token for a booking
  */
 function buildTicketToken(booking) {
-  // safe guards for old docs
   const bookingId = booking?._id ? String(booking._id) : null;
   const venueId = booking?.venue ? String(booking.venue?._id || booking.venue) : null;
   const branchId = booking?.branch ? String(booking.branch?._id || booking.branch) : null;
@@ -49,8 +49,14 @@ function buildTicketToken(booking) {
 /**
  * ✅ CREATE BOOKING (Branch-based daily 1..50)
  * Body requires: venueId, branchId, title, scheduledAt
+ *
+ * New rigidity:
+ * - prevents overlapping bookings for same user+branch+dateKey (30 min slot)
+ * - queueIndex allocated via max(queueIndex)+1 (not count)
  */
 async function createBooking(req, res) {
+  const session = await mongoose.startSession();
+
   try {
     const userId = req.user?._id || req.user?.id;
     const { venueId, branchId, title, scheduledAt } = req.body;
@@ -74,87 +80,125 @@ async function createBooking(req, res) {
 
     const dateKey = dateKeyFromDateNepal(dt);
 
-    const MAX_RETRIES = 6;
+    // ✅ configurable slot minutes (keep simple for now)
+    const SLOT_MINUTES = Number(process.env.BOOKING_SLOT_MINUTES || 30);
+    const start = dt;
+    const end = new Date(dt.getTime() + SLOT_MINUTES * 60 * 1000);
 
-    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-      // ✅ count by BRANCH + dateKey (not venue)
-      const countToday = await Booking.countDocuments({ branch: branchId, dateKey });
-      const nextIndex = countToday + 1;
+    // ✅ transaction ensures consistent checks + insert under concurrency
+    await session.withTransaction(async () => {
+      // 1) Block overlapping bookings (same user + branch + dateKey)
+      // Overlap rule: newStart < existingEnd AND newEnd > existingStart
+      const overlap = await Booking.findOne(
+        {
+          user: userId,
+          branch: branchId,
+          dateKey,
+          status: { $in: ["upcoming", "checked_in"] }, // active bookings only
+          scheduledAt: { $lt: end }, // existingStart < newEnd
+          // existingEnd > newStart  => existingStart > newStart - SLOT
+          // Since existingEnd = existingStart + SLOT, rearrange:
+          // existingStart > newStart - SLOT
+          // So: scheduledAt > newStart - SLOT
+          // We'll implement with $gt on scheduledAt:
+          // (newStart - SLOT_MINUTES)
+          scheduledAt: {
+            $gt: new Date(start.getTime() - SLOT_MINUTES * 60 * 1000),
+            $lt: end,
+          },
+        },
+        null,
+        { session }
+      );
+
+      if (overlap) {
+        throw Object.assign(new Error("You already have a booking overlapping this time"), { statusCode: 409 });
+      }
+
+      // 2) Allocate next queueIndex using max(queueIndex)+1 (ignore cancelled)
+      const last = await Booking.findOne(
+        {
+          branch: branchId,
+          dateKey,
+          status: { $nin: ["cancelled"] },
+        },
+        { queueIndex: 1 },
+        { sort: { queueIndex: -1 }, session }
+      );
+
+      const nextIndex = (last?.queueIndex || 0) + 1;
 
       if (nextIndex > 50) {
-        return res.status(400).json({
-          success: false,
-          message: "Daily limit reached (50 tickets for this branch)",
-        });
+        throw Object.assign(new Error("Daily limit reached (50 tickets for this branch)"), { statusCode: 400 });
       }
 
       const queueNumber = makeQueueNumber(nextIndex);
 
-      try {
-        const booking = await Booking.create({
-          user: userId,
-          venue: venueId,
-          branch: branchId,
-          title,
-          organizationName: title,
-          scheduledAt: dt,
-          dateKey,
-          queueIndex: nextIndex,
-          queueNumber,
-          status: "upcoming",
-        });
-
-        const ticketToken = jwt.sign(
+      const booking = await Booking.create(
+        [
           {
-            role: "ticket",
-            bookingId: String(booking._id),
-            venueId: String(booking.venue),
-            branchId: String(booking.branch),
+            user: userId,
+            venue: venueId,
+            branch: branchId,
+            title,
+            organizationName: title,
+            scheduledAt: start,
             dateKey,
+            queueIndex: nextIndex,
             queueNumber,
-            queueIndex: booking.queueIndex,
+            status: "upcoming",
           },
-          process.env.JWT_SECRET,
-          { expiresIn: "7d" }
-        );
+        ],
+        { session }
+      );
 
-        return res.status(201).json({
-          success: true,
-          message: "Booking created",
-          data: {
-            booking,
-            queueNumber,
-            ticketToken,
-          },
-        });
-      } catch (err) {
-        // Unique index collision retry
-        if (err && err.code === 11000) {
-          if (attempt === MAX_RETRIES) {
-            console.error("createBooking duplicate retry failed:", err);
-            return res.status(409).json({
-              success: false,
-              message: "Ticket allocation conflict, please try again",
-            });
-          }
-          continue;
-        }
+      const created = booking[0];
 
-        console.error("createBooking error:", err);
-        return res.status(500).json({ success: false, message: "Server error" });
-      }
-    }
+      const ticketToken = jwt.sign(
+        {
+          role: "ticket",
+          bookingId: String(created._id),
+          venueId: String(created.venue),
+          branchId: String(created.branch),
+          dateKey,
+          queueNumber,
+          queueIndex: created.queueIndex,
+        },
+        process.env.JWT_SECRET,
+        { expiresIn: "7d" }
+      );
+
+      res.status(201).json({
+        success: true,
+        message: "Booking created",
+        data: {
+          booking: created,
+          queueNumber,
+          ticketToken,
+        },
+      });
+    });
+
+    return; // response already sent in transaction
   } catch (err) {
-    console.error("createBooking outer error:", err);
-    return res.status(500).json({ success: false, message: "Server error" });
+    const code = err.statusCode || (err?.code === 11000 ? 409 : 500);
+
+    if (code === 11000 || err?.code === 11000) {
+      return res.status(409).json({
+        success: false,
+        message: "Ticket allocation conflict, please try again",
+      });
+    }
+
+    console.error("createBooking error:", err);
+    return res.status(code).json({ success: false, message: err.message || "Server error" });
+  } finally {
+    session.endSession();
   }
 }
 
 /**
  * ✅ GET MY BOOKINGS
- * Adds:
- * - ticketToken for upcoming bookings (so History can show QR)
- * - branchName + venueName (easy UI)
  */
 async function getMyBookings(req, res) {
   try {
@@ -168,11 +212,8 @@ async function getMyBookings(req, res) {
 
     const enriched = bookings.map((b) => {
       const obj = b.toObject();
-
       const status = String(obj.status || "").toLowerCase();
       const isUpcoming = status === "upcoming";
-
-      // Only generate QR token for upcoming (you can allow completed too if you want)
       const ticketToken = isUpcoming ? buildTicketToken(b) : "";
 
       return {
@@ -191,9 +232,7 @@ async function getMyBookings(req, res) {
 }
 
 /**
- * ✅ GET BOOKING BY ID (Fixes your 404)
- * GET /api/bookings/:id
- * Used by History upcoming click → fetch token/details
+ * ✅ GET BOOKING BY ID
  */
 async function getBookingById(req, res) {
   try {
@@ -210,14 +249,12 @@ async function getBookingById(req, res) {
       return res.status(404).json({ success: false, message: "Booking not found" });
     }
 
-    // ✅ owner check
     if (String(booking.user) !== String(userId)) {
       return res.status(403).json({ success: false, message: "Not allowed" });
     }
 
     const status = String(booking.status || "").toLowerCase();
     const isUpcoming = status === "upcoming";
-
     const ticketToken = isUpcoming ? buildTicketToken(booking) : "";
 
     return res.json({
@@ -236,9 +273,7 @@ async function getBookingById(req, res) {
 }
 
 /**
- * ✅ SUBMIT REVIEW (Past visit)
- * POST /api/bookings/:id/review
- * body: { rating: 1..5, review: "..." }
+ * ✅ SUBMIT REVIEW
  */
 async function submitBookingReview(req, res) {
   try {
@@ -263,22 +298,17 @@ async function submitBookingReview(req, res) {
     }
 
     const booking = await Booking.findById(id);
-
     if (!booking) return res.status(404).json({ success: false, message: "Booking not found" });
 
-    // ✅ owner check
     if (String(booking.user) !== String(userId)) {
       return res.status(403).json({ success: false, message: "Not allowed" });
     }
 
     const status = String(booking.status || "").toLowerCase();
-
-    // ✅ allow review only for completed (past)
     if (status !== "completed") {
       return res.status(400).json({ success: false, message: "You can only review completed bookings" });
     }
 
-    // ✅ store review fields
     booking.rating = r;
     booking.review = text;
     booking.reviewedAt = new Date();
@@ -302,8 +332,8 @@ async function submitBookingReview(req, res) {
 }
 
 /**
- * ✅ GET MY TODAY BOOKING (for Live Queue screen)
- * GET /api/bookings/me/today?branchId=... (preferred) OR ?venueId=...
+ * ✅ GET MY TODAY BOOKING
+ * Returns earliest upcoming booking for today
  */
 async function getMyTodayBooking(req, res) {
   try {
@@ -311,17 +341,15 @@ async function getMyTodayBooking(req, res) {
     if (!userId) return res.status(401).json({ success: false, message: "Unauthorized" });
 
     const { branchId, venueId } = req.query;
-
     const todayKey = dateKeyFromDateNepal(new Date());
 
     const query = {
       user: userId,
       dateKey: todayKey,
-      status: "upcoming",
+      status: { $in: ["upcoming", "checked_in"] },
       usedAt: null,
     };
 
-    // ✅ Prefer branch filtering (new system)
     if (branchId) query.branch = branchId;
     else if (venueId) query.venue = venueId;
 
@@ -338,7 +366,6 @@ async function getMyTodayBooking(req, res) {
       });
     }
 
-    // ✅ Prevent crash if old DB docs are missing new fields
     const safeBookingId = booking?._id ? String(booking._id) : null;
     const safeVenueId = booking?.venue ? String(booking.venue?._id || booking.venue) : (venueId ? String(venueId) : null);
     const safeBranchId = booking?.branch ? String(booking.branch?._id || booking.branch) : (branchId ? String(branchId) : null);
