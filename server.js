@@ -5,12 +5,7 @@ const path = require("path");
 
 const connectDB = require("./config/db");
 const bookingRoutes = require("./routes/bookingRoutes");
-const venueRoutes = require("./routes/venueRoutes"); // ✅ use this exact file
-
-// ✅ NEW: staff + org queue routes
-const staffRoutes = require("./routes/staffRoutes");
-const orgQueueRoutes = require("./routes/orgQueueRoutes");
-
+const venueRoutes = require("./routes/venueRoutes");
 const queueRoutes = require("./routes/queueRoutes");
 
 dotenv.config();
@@ -18,7 +13,6 @@ connectDB();
 
 const app = express();
 
-// ✅ serve logos
 app.use("/logos", express.static(path.join(__dirname, "public/logos")));
 
 app.use(
@@ -39,16 +33,11 @@ app.use((req, res, next) => {
   next();
 });
 
+// ✅ CLEAN ROUTES (ONE AUTH SYSTEM)
 app.use("/api/auth", require("./routes/auth"));
-
-// ✅ NEW: staff login + org queue (super simple)
-app.use("/api/staff", staffRoutes);
-app.use("/api/org", orgQueueRoutes);
-app.use("/api/auth", require("./routes/auth"));
-app.use("/api/venues", venueRoutes); // ✅ ONLY THIS ONCE
+app.use("/api/venues", venueRoutes);
 app.use("/api/bookings", bookingRoutes);
 app.use("/api/queue", queueRoutes);
-
 
 app.get("/", (req, res) => res.send("QueueLess API is running"));
 
