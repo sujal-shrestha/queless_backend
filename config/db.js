@@ -1,17 +1,13 @@
 // config/db.js
-const mongoose = require('mongoose');
+const mongoose = require("mongoose");
 
-const connectDB = async () => {
-  try {
-    await mongoose.connect(process.env.MONGODB_URI, {
-      // useNewUrlParser/useUnifiedTopology not needed in latest mongoose,
-      // but leaving options is fine
-    });
-    console.log('MongoDB connected');
-  } catch (err) {
-    console.error('MongoDB connection error:', err.message);
-    process.exit(1);
+module.exports = async function connectDB() {
+  const uri = process.env.MONGODB_URI || process.env.MONGO_URI;
+
+  if (!uri) {
+    throw new Error("Missing Mongo URI. Set MONGODB_URI (or MONGO_URI) in .env");
   }
-};
 
-module.exports = connectDB;
+  await mongoose.connect(uri);
+  console.log("✅ MongoDB connected");
+};
